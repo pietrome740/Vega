@@ -15,7 +15,7 @@ type Store<T> = {
 	_store: DataStore,
 	_sessions: { [string]: Session<T> },
 
-	loadSession: (store: Store<T>, player: Player) -> Session<T>,
+	loadSession: (store: Store<T>, player: Player) -> Session<T>?,
 	closeSession: (store: Store<T>, player: Player) -> (),
 	getSession: (store: Store<T>, player: Player) -> Session<T>?,
 }
@@ -29,15 +29,15 @@ local function getUserIdKey(player: Player)
 	return tostring(player.UserId)
 end
 
-local function dataStoreRetry<T>(fn: () -> T): T
+local function dataStoreRetry<T>(fn: () -> T): (boolean, T?)
 	for i = 1, MAX_RETRIES do
 		task.wait(i)
 		local sucess, result = pcall(fn)
 		if sucess then
-			return result
+			return true, result
 		end
 	end
-	error("DataStore operation failed after " .. MAX_RETRIES .. " retries.")
+	return false, nil
 end
 
 local function deepCopy<T>(original: T): T
@@ -90,7 +90,7 @@ local function saveSessionByKey<T>(store: Store<T>, key: string, releaseLock: bo
 	end)
 end
 
-local function loadSession<T>(store: Store<T>, player: Player): Session<T>
+local function loadSession<T>(store: Store<T>, player: Player): Session<T>?
 	local key = getUserIdKey(player)
 
 	if store._sessions[key] then
@@ -101,11 +101,11 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 	local lockRetries = 0
 	
 	while true do
-		if not player.Parent then error("Player left during loading") end
+		if not player.Parent then return end
 
 		local lockFailed = false
 
-		session = dataStoreRetry(function()
+		local sucess, result = dataStoreRetry(function()
 			return store._store:UpdateAsync(key, function(oldData: any)
 				local currentSession: Session<T> = oldData or {
 					data = deepCopy(store._template),
@@ -124,13 +124,21 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 				currentSession.lock = { serverId = game.JobId, time = os.time() }
 				return currentSession
 			end)
-		end) :: any
+		end) 
+
+        if not sucess then
+			player:Kick("Critical failure connecting to Roblox DataStore.\nPlease try again in a few moments.")
+			return 
+		end
+
+        session = result :: Session<T>
 
 		if lockFailed then
 			session = nil
 			lockRetries += 1
 			if lockRetries >= MAX_LOCK_RETRIES then
-				error("Session is locked by another server and max retries reached.")
+                player:Kick("Your data is still saving in the previous server.\nPlease wait 1 minute before reconnecting.")
+				return
 			end
 		end
 
@@ -174,8 +182,7 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		loadSession = loadSession,
 		closeSession = closeSession,
 		getSession = getSession
-	} :: Store<T>
-
+	} :: any
 	task.spawn(function()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL)
@@ -187,7 +194,7 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		end
 	end)
 
-	return store 
+	return store :: Store<T>
 end
 
 return {
