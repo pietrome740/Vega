@@ -17,8 +17,7 @@ type Store<T> = {
 	
 	loadSession: (store: Store<T>, player: Player) -> Session<T>,
 	closeSession: (store: Store<T>, player: Player) -> (),
-	setValue: (store: Store<T>, player: Player, newData: T) -> (),
-	updateValue: (store: Store<T>, player: Player, transformFn: (oldData: T) -> T) -> (),
+	getSession: (store: Store<T>, player: Player) -> Session<T>?,
 }
 
 local MAX_RETRIES = 5
@@ -168,8 +167,7 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		_sessions = {},
 		loadSession = loadSession,
 		closeSession = closeSession,
-		setValue = setValue,
-		updateValue = updateValue
+		getSession = getSession
 	} :: Store<T>
 	
 	task.spawn(function()
