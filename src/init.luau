@@ -155,18 +155,9 @@ local function closeSession<T>(store: Store<T>, player: Player)
 	end
 end
 
-local function updateValue<T>(store: Store<T>, player: Player, transformFn: (oldData: T) -> T)
-	local key = getUserIdKey(player)
-	if store._sessions[key] then
-		store._sessions[key].data = transformFn(store._sessions[key].data)
-	end
-end
-
-local function setValue<T>(store: Store<T>, player: Player, newData: T)
-	local key = getUserIdKey(player)
-	if store._sessions[key] then
-		store._sessions[key].data = newData
-	end
+local function getSession<T>(store: Store<T>, player: Player): Session<T>?
+    local key = getUserIdKey(player)
+    return store._sessions[key]
 end
 
 local function createStore<T>(name: string, template: T) : Store<T>
