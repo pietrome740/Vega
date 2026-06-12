@@ -203,6 +203,18 @@ local function setValue<T>(store: Store<T>, player: Player, valueName: string, v
 	data[valueName] = value
 end
 
+local function wipeSession<T>(store: Store<T>, player: Player)
+    local key = getUserIdKey(player)
+
+    player:Kick("Your profile data has been wiped.")
+    
+    store._sessions[key] = nil
+
+     dataStoreRetry(function()
+        return store._store:RemoveAsync(key)
+    end)
+end
+
 local function createStore<T>(name: string, template: T) : Store<T>
 	local store = {
 		_name = name,
