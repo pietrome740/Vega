@@ -130,7 +130,7 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 			session = nil
 			lockRetries += 1
 			if lockRetries >= MAX_LOCK_RETRIES then
-				error("SESSION_LOCKED")
+				error("Session is locked by another server and max retries reached.")
 			end
 		end
 
