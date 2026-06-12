@@ -78,7 +78,7 @@ local function saveSessionByKey<T>(store: Store<T>, key: string, releaseLock: bo
 	if not session then return end
 
 	dataStoreRetry(function()
-		return store._store:UpdateAsync(key, function()
+		return store._store:UpdateAsync(key, function(oldValue: any)
 			if releaseLock then
 				session.lock = nil
 			else
