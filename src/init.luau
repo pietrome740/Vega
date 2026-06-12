@@ -21,6 +21,7 @@ type Store<T> = {
 	setValue: (store: Store<T>, player: Player, valueName: string, value: any) -> (),
 	updateValue: (store: Store<T>, player: Player, valueName: string, transformFn: (oldValue: any) -> any) -> (),
 	getValue: (store: Store<T>, player: Player, valueName: string) -> any,
+	wipeSession: (store: Store<T>, player: Player) -> (),
 }
 
 local MAX_LOCK_RETRIES = 5
@@ -207,7 +208,7 @@ local function wipeSession<T>(store: Store<T>, player: Player)
     local key = getUserIdKey(player)
 
     player:Kick("Your profile data has been wiped.")
-    
+
     store._sessions[key] = nil
 
      dataStoreRetry(function()
@@ -226,7 +227,8 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		getSession = getSession,
 		getValue = getValue,
 		setValue = setValue,
-		updateValue = updateValue
+		updateValue = updateValue,
+        wipeSession = wipeSession
 	} :: any
 	
 	task.spawn(function()
