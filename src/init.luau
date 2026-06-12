@@ -14,12 +14,13 @@ type Store<T> = {
 	_template: T,
 	_store: DataStore,
 	_sessions: { [string]: Session<T> },
-	
+
 	loadSession: (store: Store<T>, player: Player) -> Session<T>,
 	closeSession: (store: Store<T>, player: Player) -> (),
 	getSession: (store: Store<T>, player: Player) -> Session<T>?,
 }
 
+local MAX_LOCK_RETRIES = 5
 local MAX_RETRIES = 5
 local AUTOSAVE_INTERVAL = 60
 local LOCK_TIMEOUT = 120
@@ -73,7 +74,7 @@ end
 local function saveSessionByKey<T>(store: Store<T>, key: string, releaseLock: boolean)
 	local session = store._sessions[key]
 	if not session then return end
-	
+
 	dataStoreRetry(function()
 		return store._store:UpdateAsync(key, function(oldData)
 			if releaseLock then
@@ -97,12 +98,13 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 	end
 
 	local session: Session<T>? = nil
-
+	local lockRetries = 0
+	
 	while true do
 		if not player.Parent then error("Player left during loading") end
-		
+
 		local lockFailed = false
-		
+
 		session = dataStoreRetry(function()
 			return store._store:UpdateAsync(key, function(oldData: any)
 				local currentSession: Session<T> = oldData or {
@@ -115,7 +117,7 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 						currentSession.lock = { serverId = game.JobId, time = os.time() }
 						return currentSession
 					end
-					
+
 					lockFailed = true
 					return currentSession 
 				end
@@ -123,24 +125,28 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>
 				return currentSession
 			end)
 		end) :: any
-		
+
 		if lockFailed then
 			session = nil
+			lockRetries += 1
+			if lockRetries >= MAX_LOCK_RETRIES then
+				error("SESSION_LOCKED")
+			end
 		end
-		
+
 		if session then 
 			break
 		end
-		
+
 		task.wait(2)
 	end
-	
+
 	local finalSession = session :: Session<T>
-	
+
 	reconcile(finalSession.data, store._template)
-	
+
 	store._sessions[key] = finalSession
-	
+
 	return finalSession 
 end
 
@@ -155,8 +161,8 @@ local function closeSession<T>(store: Store<T>, player: Player)
 end
 
 local function getSession<T>(store: Store<T>, player: Player): Session<T>?
-    local key = getUserIdKey(player)
-    return store._sessions[key]
+	local key = getUserIdKey(player)
+	return store._sessions[key]
 end
 
 local function createStore<T>(name: string, template: T) : Store<T>
@@ -169,7 +175,7 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		closeSession = closeSession,
 		getSession = getSession
 	} :: Store<T>
-	
+
 	task.spawn(function()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL)
