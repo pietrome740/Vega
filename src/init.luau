@@ -6,7 +6,7 @@ type Session<T> = {
 	lock: {
 		serverId: string,
 		time: number,
-	}?
+	}?,
 }
 
 type Store<T> = {
@@ -14,6 +14,7 @@ type Store<T> = {
 	_template: T,
 	_store: DataStore,
 	_sessions: { [string]: Session<T> },
+	_saveThread: thread?,
 
 	loadSession: (store: Store<T>, player: Player) -> Session<T>?,
 	closeSession: (store: Store<T>, player: Player) -> (),
@@ -22,6 +23,7 @@ type Store<T> = {
 	updateValue: (store: Store<T>, player: Player, valueName: string, transformFn: (oldValue: any) -> any) -> (),
 	getValue: (store: Store<T>, player: Player, valueName: string) -> any,
 	wipeSession: (store: Store<T>, player: Player) -> (),
+	destroy: (store: Store<T>) -> ()
 }
 
 local MAX_LOCK_RETRIES = 5
@@ -76,7 +78,9 @@ end
 
 local function saveSessionByKey<T>(store: Store<T>, key: string, releaseLock: boolean)
 	local session = store._sessions[key]
-	if not session then return end
+	if not session then
+		return
+	end
 
 	dataStoreRetry(function()
 		return store._store:UpdateAsync(key, function(oldValue: any)
@@ -85,7 +89,7 @@ local function saveSessionByKey<T>(store: Store<T>, key: string, releaseLock: bo
 			else
 				session.lock = {
 					serverId = game.JobId,
-					time = os.time()
+					time = os.time(),
 				}
 			end
 			return session
@@ -104,16 +108,19 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>?
 	local lockRetries = 0
 
 	while true do
-		if not player.Parent then return end
+		if not player.Parent then
+			return
+		end
 
 		local lockFailed = false
 
 		local sucess, result = dataStoreRetry(function()
 			return store._store:UpdateAsync(key, function(oldData: any)
-				local currentSession: Session<T> = oldData or {
-					data = deepCopy(store._template),
-					lock = nil
-				}
+				local currentSession: Session<T> = oldData
+					or {
+						data = deepCopy(store._template),
+						lock = nil,
+					}
 
 				if currentSession.lock and currentSession.lock.serverId ~= game.JobId then
 					if os.time() - currentSession.lock.time > LOCK_TIMEOUT then
@@ -122,16 +129,16 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>?
 					end
 
 					lockFailed = true
-					return currentSession 
+					return currentSession
 				end
 				currentSession.lock = { serverId = game.JobId, time = os.time() }
 				return currentSession
 			end)
-		end) 
+		end)
 
 		if not sucess then
 			player:Kick("Critical failure connecting to Roblox DataStore.\nPlease try again in a few moments.")
-			return 
+			return
 		end
 
 		session = result :: Session<T>
@@ -140,12 +147,14 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>?
 			session = nil
 			lockRetries += 1
 			if lockRetries >= MAX_LOCK_RETRIES then
-				player:Kick("Your data is still saving in the previous server.\nPlease wait 1 minute before reconnecting.")
+				player:Kick(
+					"Your data is still saving in the previous server.\nPlease wait 1 minute before reconnecting."
+				)
 				return
 			end
 		end
 
-		if session then 
+		if session then
 			break
 		end
 
@@ -158,7 +167,7 @@ local function loadSession<T>(store: Store<T>, player: Player): Session<T>?
 
 	store._sessions[key] = finalSession
 
-	return finalSession 
+	return finalSession
 end
 
 local function closeSession<T>(store: Store<T>, player: Player)
@@ -179,8 +188,10 @@ end
 local function getValue<T>(store: Store<T>, player: Player, valueName: string): any
 	local key = getUserIdKey(player)
 	local session = store._sessions[key]
-	if not session then return end
-	
+	if not session then
+		return
+	end
+
 	local data = session.data :: any
 	return data[valueName]
 end
@@ -188,35 +199,54 @@ end
 local function updateValue<T>(store: Store<T>, player: Player, valueName: string, tranformFn: (oldValue: any) -> any)
 	local key = getUserIdKey(player)
 	local session = store._sessions[key]
-	if not session then return end
-	
+	if not session then
+		return
+	end
+
 	local data = session.data :: any
-	local oldValue =  data[valueName]
+	local oldValue = data[valueName]
 	data[valueName] = tranformFn(oldValue)
 end
 
 local function setValue<T>(store: Store<T>, player: Player, valueName: string, value: any)
 	local key = getUserIdKey(player)
 	local session = store._sessions[key]
-	if not session then return end
-	
+	if not session then
+		return
+	end
+
 	local data = session.data :: any
 	data[valueName] = value
 end
 
 local function wipeSession<T>(store: Store<T>, player: Player)
-    local key = getUserIdKey(player)
+	local key = getUserIdKey(player)
 
-    player:Kick("Your profile data has been wiped.")
+	player:Kick("Your profile data has been wiped.")
 
-    store._sessions[key] = nil
+	store._sessions[key] = nil
 
-     dataStoreRetry(function()
-        return store._store:RemoveAsync(key)
-    end)
+	dataStoreRetry(function()
+		return store._store:RemoveAsync(key)
+	end)
 end
 
-local function createStore<T>(name: string, template: T) : Store<T>
+local function destroy<T>(store: Store<T>)
+	if store._saveThread then
+		task.cancel(store._saveThread)
+		store._saveThread = nil
+	end
+
+	for key, _ in store._sessions do
+		pcall(function()
+			saveSessionByKey(store, key, true)
+		end)
+	end
+
+	table.clear(store._sessions)
+end
+
+local function createStore<T>(name: string, template: T): Store<T>
 	local store = {
 		_name = name,
 		_template = template,
@@ -228,10 +258,11 @@ local function createStore<T>(name: string, template: T) : Store<T>
 		getValue = getValue,
 		setValue = setValue,
 		updateValue = updateValue,
-        wipeSession = wipeSession
+		wipeSession = wipeSession,
+		destroy = destroy
 	} :: any
-	
-	task.spawn(function()
+
+	store._saveThread = task.spawn(function()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL)
 			for key, _ in store._sessions do
@@ -246,5 +277,5 @@ local function createStore<T>(name: string, template: T) : Store<T>
 end
 
 return {
-	createStore = createStore
+	createStore = createStore,
 }
